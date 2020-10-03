@@ -1,0 +1,466 @@
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;EWOZ Extended Woz Monitor for R6501/R6511
+;
+;This is Steve Wozniak's monitor for 6502, with some 
+;modifications and adaptations to run on a Rockwell R6501
+;or R6511.
+;
+;Customized for Glitch Works R65X1Q SBC.
+;
+;Initial R6501 work by TangentDelta:
+;    http://www.tangentideas.info/
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;Rockwell 6501/6511 Equates
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+MCR		= $14		;Mode Control Register
+
+SCCR		= $15		;Serial Communications Control Register
+SCSR		= $16		;Serial Communications Status Register
+SCDAT		= $17		;Serial Channel Data Register
+
+LATCHAL		= $18		;Lower Latch A (write)
+LATCHAH		= $19		;Upper Latch A (write)
+COUNTAH		= $19		;Upper Counter A (read)
+COUNTAL		= $1A		;Lower Counter A (read)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;ASCII Equates
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+NULL		= $00
+CTRLC		= $03
+BS		= $08
+LF		= $0A
+CR		= $0D
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;Miscellaneous Equates
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+CANCEL		= CTRLC		;ASCII code to use for cancelling current line
+				;Default is CTRL+C
+
+MODVAL		= $0F		;Print MODVAL memory locations per line
+				;for EXAMINE
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;Zero Page Storage
+;
+;The Rockwell R6501 and R6511 are 6502 core, but zero page
+;has some differences:
+;
+; * RAM starts at 0x0040, internal to CPU
+; * Stack located in zero page
+; * I/O and control registers in zero page below 0x0040
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+USRIRQLO	= $40
+USRIRQHI	= $41
+
+XAML		= $43
+XAMH		= $44
+STL		= $45
+STH		= $46
+L		= $47
+H		= $48
+YSAV		= $49
+MODE		= $4A
+MSGL		= $4B
+MSGH		= $4C
+COUNTER		= $4D
+CKSUM		= $4E
+CKSUMCHECK	= $4F
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;Page One Variables
+;
+;Since the R6501/R6511 stack is located in zero page, page
+;one may be used as any other memory page.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+IN		= $0100		;Input buffer
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;Adjust origin for your system. Be sure to update the
+;Makefile with the correct offset!
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+	.org	$7000
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;SETUP -- Start of the actual Woz monitor
+;
+;Falls through to SFTRST.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+SETUP:	SEI			;Disable interrupts
+	CLD			;Clear decimal arithmetic mode.
+	LDX	#$FF		;Set up stack pointer
+	TXS
+
+	LDA	#$00		;Set Mode Control Register: full address mode,
+	STA	MCR		;Port D tristate, Port B latch disabled, both
+				;timers in inverval mode.
+
+	LDA	#$C0		;Configure Serial Communications Channel
+	STA	SCCR		;Enable XMTR/RCVR, async, 8N1
+
+	LDA	#$0C		;* 4800 baud at 1MHz Phi2
+	STA	LATCHAL
+	LDA	#$00
+	STA	LATCHAH
+
+	LDA	#<DEFIRQ	;Initialize default IRQ handler
+	STA	USRIRQLO
+	LDA	#>DEFIRQ
+	STA	USRIRQHI
+
+	LDA	#<LOGMSG	;Set up pointers to signon message
+	STA	MSGL
+	LDA	#>LOGMSG
+	STA	MSGH
+	JSR	SHWMSG		;Print signon message
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;SFTRST -- Soft reset the monitor
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+SFTRST:	LDA	#CANCEL		;Auto CANCEL
+NOTCR:	CMP	#BS		;Backspace?
+	BEQ	BKSPC		;Yes, handle it
+	CMP	#CANCEL		;CANCEL ASCII code?
+	BEQ	CANIT		;Yes.
+	INY			;Advance text index.
+	BPL	NXTCHR		;Auto CANCEL if > 127 chars entered
+CANIT:	LDA	#'\'
+	JSR	COUT		;Print backslash
+GETLIN:	LDA	#LF
+	JSR	COUT
+	LDA	#CR
+	JSR	COUT
+
+	LDY	#$01		;Initiallize text index.
+BKSPC:	DEY			;Backup text index.
+	BMI	GETLIN		;Beyond start of line, reinitialize.
+	LDA	#' '		;Overwrite the backspaced char.
+	JSR	COUT
+	LDA	#BS		;Backspace again to get to correct pos.
+	JSR	COUT
+NXTCHR:	JSR	CIN
+	CMP	#$60		;Is it Lower case?
+	BMI	NXTCH1		;Nope, just convert it
+	AND	#$5F		;If lower case, convert to Upper case
+NXTCH1:	STA	IN,Y		;Add to text buffer.
+	JSR	COUT		;Display character.
+	CMP	#CR		;CR?
+	BNE	NOTCR		;No.
+	LDY	#$FF		;Reset text index.
+	LDA	#$00		;For XAM mode.
+	TAX			;0->X.
+SETSTO:	ASL			;Leaves $7B if setting STOR mode.
+SETMOD:	STA	MODE		;$00 = XAM, $7B = STORE, $2E = BLOCK XAM
+BLSKIP:	INY			;Advance input buffer pointer
+NXTITM:	LDA	IN,Y		;Get character.
+	CMP	#CR
+	BEQ	GETLIN		;Got CR, this line complete
+	CMP	#'.'
+	BCC	BLSKIP		;Skip delimiter.
+	BEQ	SETMOD		;Set BLOCK XAM mode.
+	CMP	#':'
+	BEQ	SETSTO		;Yes, set STOR mode.
+	CMP	#'R'
+	BEQ	RUN		;Yes, run user program.
+	CMP	#'L'
+	BEQ	DOLOAD		;* Yes, Load Intel Code.
+	STX	L		;$00->L.
+	STX	H		; and H.
+	STY	YSAV		;Save Y for comparison.
+NEXHEX:	LDA	IN,Y		;Get character for hex test.
+	EOR	#$30		;Map digits to $0-9.
+	CMP	#$0A		;Digit?
+	BCC	DIG		;Yes.
+	ADC	#$88		;Map letter "A"-"F" to $FA-FF.
+	CMP	#$FA		;Hex letter?
+	BCC	NOTHEX		;No, character not hex.
+DIG:	ASL
+	ASL			;Hex digit to MSD of A.
+	ASL
+	ASL
+	LDX	#$04		;Shift count.
+HEXSHF: ASL			;Hex digit left MSB to carry.
+	ROL	L		;Rotate into LSD.
+	ROL	H		;Rotate into MSD's.
+	DEX			;Done 4 shifts?
+	BNE	HEXSHF		;No, loop.
+	INY			;Advance text index.
+	BNE	NEXHEX		;Always taken. Check next character for hex.
+NOTHEX:	CPY	YSAV		;Check if L, H empty (no hex digits).
+	BNE	NOCANC		;Branch out of range, had to improvise...
+	JMP	CANCEL		;Yes, generate CANCEL sequence.
+
+RUN:	JSR	ACTRUN		;JSR to the Address we want to run.
+	JMP	SFTRST		;When returned for the program, reset EWOZ.
+ACTRUN:	JMP	(XAML)		;Run at current XAM index.
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;DOLOAD -- Prepare to load Intel HEX data
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+DOLOAD:	JSR	LODINT		;Load the Intel code.
+	JMP	SFTRST		;When returned from the program, reset EWOZ.
+
+NOCANC:	BIT	MODE		;Test MODE byte.
+	BVC	NTSTOR		;Bit 6=0 for STOR, 1 for XAM and BLOCK XAM
+	LDA	L		;LSD's of hex data.
+	STA	(STL, X)	;Store at current "store index".
+	INC	STL		;Increment store index.
+	BNE	NXTITM		;Get next item. (no carry).
+	INC	STH		;Add carry to 'store index' high order.
+
+TONXIT:	JMP	NXTITM		;Get next command item.
+
+NTSTOR:	LDA	MODE		;Get MODE byte
+	CMP	#'.'		;Check for BLOCK XAM
+	BEQ	XAMNXT		;Yes, do it 
+
+	LDX	#$02		;Byte count.
+SETADR:	LDA	L-1,X		;Copy hex data to
+	STA	STL-1,X		;"store index".
+	STA	XAML-1,X	;And to "XAM index'.
+	DEX			;Next of 2 bytes.
+	BNE	SETADR		;Loop unless X = 0.
+
+NXTPRT:	BNE	PRDATA		;NE means no address to print.
+	LDA	#CR
+	JSR	COUT
+	LDA	#LF
+	JSR	COUT
+	LDA	XAMH		;'Examine index' high-order byte.
+	JSR	PRBYTE		;Output it in hex format.
+	LDA	XAML		;Low-order "examine index" byte.
+	JSR	PRBYTE		;Output it in hex format.
+	LDA	#':'
+	JSR	COUT
+
+PRDATA:	LDA	#' '
+	JSR	COUT
+	LDA	(XAML,X)	;Get data byte at 'examine index".
+	JSR	PRBYTE		;Output it in hex format.
+
+XAMNXT:	STX	MODE		;0-> MODE (XAM mode).
+	LDA	XAML
+	CMP	L		;Compare 'examine index" to hex data.
+	LDA	XAMH
+	SBC	H
+	BCS	TONXIT		;Not less, so no more data to output.
+	INC	XAML
+	BNE	MODCHK		;Increment 'examine index".
+	INC	XAMH
+
+MODCHK:	LDA	XAML		;Check low-order 'exainine index' byte
+	AND	#MODVAL		;For MOD 8=0 ** changed to $0F to get 16 values per row **
+	BPL	NXTPRT		;Always taken.
+
+PRBYTE:	PHA			;Save A for LSD.
+	LSR
+	LSR
+	LSR			;MSD to LSD position.
+	LSR
+	JSR	PRHEX		;Output hex digit.
+	PLA			;Restore A.
+
+PRHEX:	AND	#$0F		;Mask LSD for hex print.
+	ORA	#'0'		;Add '0' ($30).
+	CMP	#':'		;Digit?
+	BCC	PRHEX1		;Yes, output it.
+	ADC	#$06		;Add offset for letter.
+PRHEX1:	JMP	COUT		;Print it, RTS from COUT
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;SHWMSG -- Print a NULL-terminated string
+;
+;pre: MSGL, MSGH point to NULL terminated string
+;post: string printed to console
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+SHWMSG:	LDY	#$0		;Clear string position counter
+SHWMS1:	LDA	(MSGL),Y	;A = next char in string
+	BEQ	SHWMS2		;A = NULL, done
+	JSR	COUT
+	INY			;Increment string position counter
+	BNE	SHWMS1		;Not done, keep going
+SHWMS2:	RTS 
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;LODINT -- Intel HEX loader
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+LODINT:	LDA	#<ISTMSG
+	STA	MSGL
+	LDA	#>ISTMSG
+	STA	MSGH
+	JSR	SHWMSG		;Show Start Transfer.
+	LDY	#$00
+	STY	CKSUMCHECK	;If CKSUMCHECK=0, all is good.
+
+INTLIN:	JSR	CIN		;Get char
+	STA	IN,Y		;Store it
+	INY			;Next
+	CMP	#CANCEL		;Escape ?
+	BEQ	INTDON		;Yes, abort.
+	CMP	#$0D		;Did we find a new line ?
+	BNE	INTLIN		;Nope, continue to scan line.
+	LDY	#$FF		;Find (:)
+FNDCOL:	INY
+	LDA	IN,Y
+	CMP	#':'		;Is it Colon ?
+	BNE	FNDCOL		;Nope, try next.
+	INY			;Skip colon
+	LDX	#$00		;Zero in X
+	STX	CKSUM		;Zero Check sum
+	JSR	GETHEX		;Get Number of bytes.
+	STA	COUNTER		;Number of bytes in Counter.
+	CLC			;Clear carry
+	ADC	CKSUM		;Add CKSUM
+	STA	CKSUM		;Store it
+	JSR	GETHEX		;Get Hi byte
+	STA	STH		;Store it
+	CLC			;Clear carry
+	ADC	CKSUM		;Add CKSUM
+	STA	CKSUM		;Store it
+	JSR	GETHEX		;Get Lo byte
+	STA	STL		;Store it
+	CLC			;Clear carry
+	ADC	CKSUM		;Add CKSUM
+	STA	CKSUM		;Store it
+	LDA	#'.'
+	JSR	COUT
+NODOT:	JSR	GETHEX		;Get Control byte.
+	CMP	#$01		;Is it a Termination record ?
+	BEQ	INTDON		;Yes, we are done.
+	CLC			;Clear carry
+	ADC	CKSUM		;Add CKSUM
+	STA	CKSUM		;Store it
+INTSTR:	JSR	GETHEX		;Get Data Byte
+	STA	(STL,X)		;Store it
+	CLC			;Clear carry
+	ADC	CKSUM		;Add CKSUM
+	STA	CKSUM		;Store it
+	INC	STL		;Next Address
+	BNE	TSTCNT		;Test to see if Hi byte needs INC
+	INC	STH		;If so, INC it.
+TSTCNT:	DEC	COUNTER		;Count down.
+	BNE	INTSTR		;Next byte
+	JSR	GETHEX		;Get Checksum
+	LDY	#$00		;Zero Y
+	CLC			;Clear carry
+	ADC	CKSUM		;Add CKSUM
+	BEQ	INTLIN		;Checksum OK.
+	LDA	#$01		;Flag CKSUM error.
+	STA	CKSUMCHECK	;Store it
+	JMP	INTLIN		;Process next line.
+
+INTDON:	LDA	CKSUMCHECK	;Test if everything is OK.
+	BEQ	OKMESS		;Show OK message.
+	LDA	#CR
+	JSR	COUT
+	LDA	#<IERMSG	;Load Error Message
+	STA	MSGL
+	LDA	#>IERMSG
+	STA	MSGH
+	JSR	SHWMSG		;Show Error.
+	LDA	#CR
+	JSR	COUT
+	RTS
+
+OKMESS:	LDA	#<IOKMSG	;Load OK Message.
+	STA	MSGL
+	LDA	#>IOKMSG
+	STA	MSGH
+	JSR	SHWMSG		;Show Done.
+	RTS
+
+GETHEX:	LDA	IN,Y		;Get first char.
+	EOR	#'0'
+	CMP	#LF
+	BCC	DNFRST
+	ADC	#$08
+DNFRST:	ASL
+	ASL
+	ASL
+	ASL
+	STA	L
+	INY
+	LDA	IN,Y		;Get next char.
+	EOR	#'0'
+	CMP	#LF
+	BCC	DNSECN
+	ADC	#$08
+DNSECN:	AND	#$0F
+	ORA L
+	INY
+	RTS
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;IRC -- User IRQ handler
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+IRQ:	JMP	(USRIRQLO)	;Jump to user IRQ vector in ZP
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;DEFIRQ -- Default IRQ hanlder
+;
+;This is a placeholder to catch spurious interrupts.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+DEFIRQ:	PHA
+
+	LDA	#<IRQMSG	;Load IRQ Message.
+	STA	MSGL
+	LDA	#>IRQMSG
+	STA	MSGH
+	JSR	SHWMSG		;Show Done.
+
+	PLA
+	RTI
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;CIN -- Get a character from the console
+;
+;Blocks until a character is available.
+;
+;pre: serial UART initialized
+;post: A register contains received character
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+CIN:	LDA	SCSR		;See if we got an incoming char
+	AND	#$01		;Test bit 0
+	BEQ	CIN		;Wait for character
+	LDA	SCDAT		;Load char
+	RTS
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;COUT -- Print a character to the console
+;
+;Strips parity, preserves A register.
+;
+;pre: A register contains character to print
+;post: character printed to console
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+COUT:	PHA			;Save A register
+COUT1:	LDA	SCSR		;Get UART status
+	AND	#$40		;Mask off XMTR Data Reg Empty
+	BEQ	COUT1		;Transmitter busy, wait
+	PLA			;A = character to print
+	PHA			;Back on stack
+	STA	SCDAT		;Send it to UART
+	PLA			;A = original character to send
+	RTS
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;Message Strings
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+LOGMSG:	.byte	$0d,$0a, "EWOZ 1.1 for R6501/R6511", CR, LF, NULL
+ISTMSG:	.byte	$0d,$0a, "Start Intel Hex code Transfer.", CR, LF, NULL
+IOKMSG:	.byte	$0d,$0a, "Intel Hex Imported OK.", CR, LF, NULL
+IERMSG:	.byte	$0d,$0a, "Intel Hex Imported with checksum error.", CR, LF, NULL
+IRQMSG:	.byte	$0d,$0a, "IRQ", CR, LF, NULL
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;NMI/Reset/IRQ Vectors
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+	.org	$FFFA
+
+	.word	SETUP		;$FFFA/$FFFB = NMI
+	.word	SETUP		;$FFFC/$FFFD = RESET
+	.word	IRQ		;$FFFE/$FFFF = IRQ/BRK
