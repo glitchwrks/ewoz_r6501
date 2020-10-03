@@ -438,7 +438,7 @@ DNSECN:	AND	#$0F
 	RTS
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;IRC -- User IRQ handler
+;IRQ -- User IRQ handler
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 IRQ:	JMP	(USRIRQLO)	;Jump to user IRQ vector in ZP
 
