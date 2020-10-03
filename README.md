@@ -103,7 +103,7 @@ eWoz responds with the address and its contents, then does a `JSR` to the memory
 
 ### Intel HEX Loader
 
-Currently, Intel HEX format files must use DOS/Windows line endings (CR,LF). UNIX line endings (LF only) will hang it. Load Intel HEX files as follows:
+Intel HEX format files can use either DOS/Windows line endings (CR,LF) or UNIX line endings (LF only). Load Intel HEX files as follows:
 
 ```
 L

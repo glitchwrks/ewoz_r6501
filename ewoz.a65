@@ -69,7 +69,7 @@ MSGL		= $4B
 MSGH		= $4C
 COUNTER		= $4D
 CKSUM		= $4E
-CKSUMCHECK	= $4F
+CKSUMFLAG	= $4F
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;Page One Variables
@@ -294,14 +294,14 @@ LODINT:	LDA	#<ISTMSG
 	STA	MSGH
 	JSR	SHWMSG		;Show Start Transfer.
 	LDY	#$00
-	STY	CKSUMCHECK	;If CKSUMCHECK=0, all is good.
+	STY	CKSUMFLAG	;If CKSUMFLAG=0, all is good.
 
 INTLIN:	JSR	CIN		;Get char
 	STA	IN,Y		;Store it
 	INY			;Next
 	CMP	#CANCEL		;Escape ?
 	BEQ	INTDON		;Yes, abort.
-	CMP	#$0D		;Did we find a new line ?
+	CMP	#LF		;Did we find a new line ?
 	BNE	INTLIN		;Nope, continue to scan line.
 	LDY	#$FF		;Find (:)
 FNDCOL:	INY
@@ -350,10 +350,10 @@ TSTCNT:	DEC	COUNTER		;Count down.
 	ADC	CKSUM		;Add CKSUM
 	BEQ	INTLIN		;Checksum OK.
 	LDA	#$01		;Flag CKSUM error.
-	STA	CKSUMCHECK	;Store it
+	STA	CKSUMFLAG	;Store it
 	JMP	INTLIN		;Process next line.
 
-INTDON:	LDA	CKSUMCHECK	;Test if everything is OK.
+INTDON:	LDA	CKSUMFLAG	;Test if everything is OK.
 	BEQ	OKMESS		;Show OK message.
 	LDA	#CR
 	JSR	COUT
