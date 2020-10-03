@@ -14,6 +14,8 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;Rockwell 6501/6511 Equates
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+PORTA		= $00		;Port A data register
+
 MCR		= $14		;Mode Control Register
 
 SCCR		= $15		;Serial Communications Control Register
@@ -42,6 +44,9 @@ CANCEL		= CTRLC		;ASCII code to use for cancelling current line
 
 MODVAL		= $0F		;Print MODVAL memory locations per line
 				;for EXAMINE
+
+SW2MASK		= $3F		;Mask for SW2 bits of Port A
+BRMASK		= $30		;Mask for SW2 positions 3 and 4
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;Zero Page Storage
@@ -102,12 +107,50 @@ SETUP:	SEI			;Disable interrupts
 	LDA	#$C0		;Configure Serial Communications Channel
 	STA	SCCR		;Enable XMTR/RCVR, async, 8N1
 
-	LDA	#$0C		;* 4800 baud at 1MHz Phi2
-	STA	LATCHAL
-	LDA	#$00
-	STA	LATCHAH
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;SETBR -- Set the serial channel bitrate
+;
+;This routine reads from Port A and uses the value to 
+;select a bitrate for the internal serial channel. The 
+;speed will depend on the PHI2 frequency of the CPU:
+;
+;    Bit 5 | Bit 4 | PHI2 | Speed
+;    -------------------------------
+;      0   |   0   | 1MHz | 4800 bps
+;      0   |   1   | 1MHz | 2400 bps
+;      1   |   0   | 1MHz | 1200 bps
+;      1   |   1   | 1MHz |  300 bps
+;      0   |   0   | 2MHz | 9600 bps
+;      0   |   1   | 2MHz | 4800 bps
+;      1   |   0   | 2MHz | 2400 bps
+;      1   |   1   | 2MHz |  600 bps
+;
+;On the Glitch Works R65X1Q SBC, Port A bit 5 is connected
+;to SW2 position 3, bit 4 is connect to SW2 position 4.
+;
+;The bitrate table is stored at BRTAB.
+;
+;Do note that 9600 bps at 1 MHz PHI2 (19200 at 2 MHz PHI2)
+;is too far off-spec for most serial devices.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+SETBR:	LDA	PORTA		;Get Port A contents
+	AND	#BRMASK		;Mask off bitrate switches 
+				;SW2-3 = PA5, SW2-4 = PA4
+	CLC
+	ROR			;SW2-3 = bit 4, SW2-4 = bit 3
+	ROR			;SW2-3 = bit 3, SW2-4 = bit 2
+	ROR			;SW2-3 = bit 2, SW2-4 = bit 1
+	TAX			;X = low byte offset into BRTAB
+	LDA	BRTAB,X		;A = low byte of divisor
+	STA	LATCHAL		;Set Latch A low byte
+	INX			;X = high byte offset into BRTAB
+	LDA	BRTAB,X		;A = high byte of divisor
+	STA	LATCHAH		;Set Latch A high byte
 
-	LDA	#<DEFIRQ	;Initialize default IRQ handler
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;SETIRQ -- Set up the default IRQ handler vector
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+SETIRQ:	LDA	#<DEFIRQ	;Initialize default IRQ handler
 	STA	USRIRQLO
 	LDA	#>DEFIRQ
 	STA	USRIRQHI
@@ -455,6 +498,20 @@ ISTMSG:	.byte	$0d,$0a, "Start Intel Hex code Transfer.", CR, LF, NULL
 IOKMSG:	.byte	$0d,$0a, "Intel Hex Imported OK.", CR, LF, NULL
 IERMSG:	.byte	$0d,$0a, "Intel Hex Imported with checksum error.", CR, LF, NULL
 IRQMSG:	.byte	$0d,$0a, "IRQ", CR, LF, NULL
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;Serial Channel Bitrate Table
+;
+;See SETBR for usage. The values in this table are obtained
+;from the Rockwell R6501 One Chip Microprocessor datasheet.
+;
+;Noted bitrates are for a 1 MHz PHI2 clock. Double them for
+;2 MHz PHI2 clock.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+BRTAB:	.word	$000C		;4800 bps
+	.word	$0019		;2400 bps
+	.word	$0033		;1200 bps
+	.word	$00CF		; 300 bps
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;NMI/Reset/IRQ Vectors
