@@ -85,10 +85,9 @@ CKSUMFLAG	= $4F
 IN		= $0100		;Input buffer
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;Adjust origin for your system. Be sure to update the
-;Makefile with the correct offset!
+;Adjust origin in the Makefile.
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-	.org	$7000
+	.segment "ROM_CODE"
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;SETUP -- Start of the actual Woz monitor
@@ -493,7 +492,7 @@ COUT1:	LDA	SCSR		;Get UART status
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;Message Strings
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-LOGMSG:	.byte	$0d,$0a, "EWOZ 1.1 for R6501/R6511", CR, LF, NULL
+LOGMSG:	.byte	$0d,$0a, "EWOZ 1.1 for Glitch Works R65X1Q SBC", CR, LF, NULL
 ISTMSG:	.byte	$0d,$0a, "Start Intel Hex code Transfer.", CR, LF, NULL
 IOKMSG:	.byte	$0d,$0a, "Intel Hex Imported OK.", CR, LF, NULL
 IERMSG:	.byte	$0d,$0a, "Intel Hex Imported with checksum error.", CR, LF, NULL
@@ -516,7 +515,7 @@ BRTAB:	.word	$000C		;4800 bps
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;NMI/Reset/IRQ Vectors
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-	.org	$FFFA
+	.segment "VECTORS"
 
 	.word	SETUP		;$FFFA/$FFFB = NMI
 	.word	SETUP		;$FFFC/$FFFD = RESET
