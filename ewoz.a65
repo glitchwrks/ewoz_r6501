@@ -234,7 +234,7 @@ HEXSHF: ASL			;Hex digit left MSB to carry.
 	BNE	NEXHEX		;Always taken. Check next character for hex.
 NOTHEX:	CPY	YSAV		;Check if L, H empty (no hex digits).
 	BNE	NOCANC		;Branch out of range, had to improvise...
-	JMP	CANCEL		;Yes, generate CANCEL sequence.
+	JMP	SFTRST		;Yes, soft reset the monitor
 
 RUN:	JSR	ACTRUN		;JSR to the Address we want to run.
 	JMP	SFTRST		;When returned for the program, reset EWOZ.
@@ -492,7 +492,7 @@ COUT1:	LDA	SCSR		;Get UART status
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;Message Strings
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-LOGMSG:	.byte	$0d,$0a, "EWOZ 1.1 for Glitch Works R65X1Q SBC", CR, LF, NULL
+LOGMSG:	.byte	$0d,$0a, "EWOZ 1.2 for Glitch Works R65X1Q SBC", CR, LF, NULL
 ISTMSG:	.byte	$0d,$0a, "Start Intel Hex code Transfer.", CR, LF, NULL
 IOKMSG:	.byte	$0d,$0a, "Intel Hex Imported OK.", CR, LF, NULL
 IERMSG:	.byte	$0d,$0a, "Intel Hex Imported with checksum error.", CR, LF, NULL
