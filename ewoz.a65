@@ -92,7 +92,7 @@ IN		= $0100		;Input buffer
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;SETUP -- Start of the actual Woz monitor
 ;
-;Falls through to SFTRST.
+;Falls through to SETBR.
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 SETUP:	SEI			;Disable interrupts
 	CLD			;Clear decimal arithmetic mode.
@@ -101,7 +101,7 @@ SETUP:	SEI			;Disable interrupts
 
 	LDA	#$00		;Set Mode Control Register: full address mode,
 	STA	MCR		;Port D tristate, Port B latch disabled, both
-				;timers in inverval mode.
+				;timers in interval mode.
 
 	LDA	#$C0		;Configure Serial Communications Channel
 	STA	SCCR		;Enable XMTR/RCVR, async, 8N1
